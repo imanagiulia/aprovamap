@@ -1,0 +1,21 @@
+# Dependencies
+node_modules
+
+# Build
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+
+# Vercel
+.vercel
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
