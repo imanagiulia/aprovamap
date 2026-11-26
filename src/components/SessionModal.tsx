@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import type { SessionType, StudySession, Subject, Subtopic } from '../types';
 import { SESSION_TYPE_META, todayISO } from '../utils/mastery';
+import { formatDatabaseError } from '../context/StudyContext';
 
 interface SessionModalProps {
   isOpen: boolean;
@@ -50,9 +51,11 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const [completed, setCompleted] = useState(false);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setError(null);
       if (editingSession) {
         setSubjectId(editingSession.subject_id);
         setSubtopicId(editingSession.subtopic_id ?? '');
@@ -101,6 +104,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subjectId || !scheduledDate) return;
+    setError(null);
     setSaving(true);
     try {
       await onSave({
@@ -114,6 +118,9 @@ export const SessionModal: React.FC<SessionModalProps> = ({
         notes: notes.trim(),
       });
       onClose();
+    } catch (err) {
+      console.error(err);
+      setError(formatDatabaseError(err, 'Não foi possível agendar a sessão.'));
     } finally {
       setSaving(false);
     }
@@ -135,6 +142,11 @@ export const SessionModal: React.FC<SessionModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+              {error}
+            </div>
+          )}
           {subjects.length === 0 ? (
             <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
               Cadastre ao menos uma matéria primeiro na aba <strong>Matérias</strong> para montar seu cronograma.

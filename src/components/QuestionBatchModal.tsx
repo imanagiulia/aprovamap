@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useStudy } from '../context/StudyContext';
+import { useStudy, formatDatabaseError } from '../context/StudyContext';
 import {
   computeSubtopicStats,
   getMasteryLevel,
@@ -113,6 +113,9 @@ export const QuestionBatchModal: React.FC = () => {
       });
       setSource('');
       setNotes('');
+    } catch (err) {
+      console.error(err);
+      setError(formatDatabaseError(err, 'Não foi possível salvar a bateria de questões.'));
     } finally {
       setSaving(false);
     }

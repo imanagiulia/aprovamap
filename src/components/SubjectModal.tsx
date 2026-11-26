@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { Subject } from '../types';
 import { SUBJECT_COLORS } from '../utils/mastery';
+import { formatDatabaseError } from '../context/StudyContext';
 
 interface SubjectModalProps {
   isOpen: boolean;
@@ -26,9 +27,11 @@ export const SubjectModal: React.FC<SubjectModalProps> = ({
   const [color, setColor] = useState(SUBJECT_COLORS[0]);
   const [targetAccuracy, setTargetAccuracy] = useState(80);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setError(null);
       if (editingSubject) {
         setName(editingSubject.name);
         setDescription(editingSubject.description);
@@ -48,6 +51,7 @@ export const SubjectModal: React.FC<SubjectModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    setError(null);
     setSaving(true);
     try {
       await onSave({
@@ -57,6 +61,9 @@ export const SubjectModal: React.FC<SubjectModalProps> = ({
         target_accuracy: Math.min(100, Math.max(1, Number(targetAccuracy) || 80)),
       });
       onClose();
+    } catch (err) {
+      console.error(err);
+      setError(formatDatabaseError(err, 'Não foi possível salvar a matéria.'));
     } finally {
       setSaving(false);
     }
@@ -78,6 +85,11 @@ export const SubjectModal: React.FC<SubjectModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {error && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+              {error}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
               Nome da Matéria *

@@ -134,6 +134,27 @@ const StudyContext = createContext<StudyContextValue | null>(null);
 
 const THEME_KEY = 'aprovamap_theme_v1';
 
+export function formatDatabaseError(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object') {
+    const code = 'code' in err ? String((err as { code?: unknown }).code ?? '') : '';
+    const message = 'message' in err ? String((err as { message?: unknown }).message ?? '') : '';
+
+    if (code === '42501' || message.toLowerCase().includes('permission denied')) {
+      return 'Permissão negada no Supabase (erro 42501). Execute os comandos GRANT do supabase/schema.sql no SQL Editor.';
+    }
+    if (code === '42P01' || code === 'PGRST205' || message.toLowerCase().includes('could not find the table')) {
+      return 'Tabelas não encontradas no Supabase. Execute o arquivo supabase/schema.sql no SQL Editor.';
+    }
+    if (message.toLowerCase().includes('row-level security')) {
+      return 'Acesso bloqueado pelas políticas RLS do Supabase. Faça login novamente ou revise o schema.sql.';
+    }
+    if (message) {
+      return `${fallback} (${message})`;
+    }
+  }
+  return fallback;
+}
+
 export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -250,7 +271,10 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setSessions(data.sessions);
     } catch (err) {
       console.error(err);
-      showToast('Erro ao carregar os dados. Verifique a conexão.', 'error');
+      showToast(
+        formatDatabaseError(err, 'Erro ao carregar os dados. Verifique a conexão.'),
+        'error'
+      );
     } finally {
       setDataLoading(false);
     }
@@ -322,13 +346,18 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // CRUD actions
   const createSubject = useCallback(
     async (input: Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>) => {
-      const created = await dataService.createSubject(
-        input,
-        user?.mode === 'supabase' ? user.id : undefined
-      );
-      setSubjects((prev) => [...prev, created]);
-      showToast(`Matéria "${created.name}" cadastrada!`);
-      return created;
+      try {
+        const created = await dataService.createSubject(
+          input,
+          user?.mode === 'supabase' ? user.id : undefined
+        );
+        setSubjects((prev) => [...prev, created]);
+        showToast(`Matéria "${created.name}" cadastrada!`);
+        return created;
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao cadastrar matéria.'), 'error');
+        throw err;
+      }
     },
     [user, showToast]
   );
@@ -338,24 +367,34 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: string,
       patch: Partial<Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>>
     ) => {
-      const updated = await dataService.updateSubject(id, patch);
-      setSubjects((prev) => prev.map((s) => (s.id === id ? updated : s)));
-      showToast('Matéria atualizada.');
+      try {
+        const updated = await dataService.updateSubject(id, patch);
+        setSubjects((prev) => prev.map((s) => (s.id === id ? updated : s)));
+        showToast('Matéria atualizada.');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao atualizar matéria.'), 'error');
+        throw err;
+      }
     },
     [showToast]
   );
 
   const deleteSubject = useCallback(
     async (id: string) => {
-      await dataService.deleteSubject(id);
-      const removedSubtopicIds = new Set(
-        subtopics.filter((t) => t.subject_id === id).map((t) => t.id)
-      );
-      setSubjects((prev) => prev.filter((s) => s.id !== id));
-      setSubtopics((prev) => prev.filter((t) => t.subject_id !== id));
-      setBatches((prev) => prev.filter((b) => !removedSubtopicIds.has(b.subtopic_id)));
-      setSessions((prev) => prev.filter((s) => s.subject_id !== id));
-      showToast('Matéria excluída.', 'info');
+      try {
+        await dataService.deleteSubject(id);
+        const removedSubtopicIds = new Set(
+          subtopics.filter((t) => t.subject_id === id).map((t) => t.id)
+        );
+        setSubjects((prev) => prev.filter((s) => s.id !== id));
+        setSubtopics((prev) => prev.filter((t) => t.subject_id !== id));
+        setBatches((prev) => prev.filter((b) => !removedSubtopicIds.has(b.subtopic_id)));
+        setSessions((prev) => prev.filter((s) => s.subject_id !== id));
+        showToast('Matéria excluída.', 'info');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao excluir matéria.'), 'error');
+        throw err;
+      }
     },
     [subtopics, showToast]
   );
@@ -364,13 +403,18 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (
       input: Pick<Subtopic, 'subject_id' | 'title' | 'notes' | 'study_status' | 'practiced_questions'>
     ) => {
-      const created = await dataService.createSubtopic(
-        input,
-        user?.mode === 'supabase' ? user.id : undefined
-      );
-      setSubtopics((prev) => [...prev, created]);
-      showToast(`Subtópico "${created.title}" adicionado!`);
-      return created;
+      try {
+        const created = await dataService.createSubtopic(
+          input,
+          user?.mode === 'supabase' ? user.id : undefined
+        );
+        setSubtopics((prev) => [...prev, created]);
+        showToast(`Subtópico "${created.title}" adicionado!`);
+        return created;
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao adicionar subtópico.'), 'error');
+        throw err;
+      }
     },
     [user, showToast]
   );
@@ -382,21 +426,31 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         Pick<Subtopic, 'subject_id' | 'title' | 'notes' | 'study_status' | 'practiced_questions'>
       >
     ) => {
-      const updated = await dataService.updateSubtopic(id, patch);
-      setSubtopics((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      try {
+        const updated = await dataService.updateSubtopic(id, patch);
+        setSubtopics((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao atualizar subtópico.'), 'error');
+        throw err;
+      }
     },
-    []
+    [showToast]
   );
 
   const deleteSubtopic = useCallback(
     async (id: string) => {
-      await dataService.deleteSubtopic(id);
-      setSubtopics((prev) => prev.filter((t) => t.id !== id));
-      setBatches((prev) => prev.filter((b) => b.subtopic_id !== id));
-      setSessions((prev) =>
-        prev.map((s) => (s.subtopic_id === id ? { ...s, subtopic_id: null } : s))
-      );
-      showToast('Subtópico excluído.', 'info');
+      try {
+        await dataService.deleteSubtopic(id);
+        setSubtopics((prev) => prev.filter((t) => t.id !== id));
+        setBatches((prev) => prev.filter((b) => b.subtopic_id !== id));
+        setSessions((prev) =>
+          prev.map((s) => (s.subtopic_id === id ? { ...s, subtopic_id: null } : s))
+        );
+        showToast('Subtópico excluído.', 'info');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao excluir subtópico.'), 'error');
+        throw err;
+      }
     },
     [showToast]
   );
@@ -408,27 +462,37 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         'subtopic_id' | 'total_questions' | 'correct_answers' | 'source' | 'notes' | 'practiced_at'
       >
     ) => {
-      const created = await dataService.createBatch(
-        input,
-        user?.mode === 'supabase' ? user.id : undefined
-      );
-      setBatches((prev) => [created, ...prev]);
-      setSubtopics((prev) =>
-        prev.map((t) =>
-          t.id === input.subtopic_id ? { ...t, practiced_questions: true } : t
-        )
-      );
-      const pct = Math.round((input.correct_answers / input.total_questions) * 100);
-      showToast(`Bateria registrada: ${input.correct_answers}/${input.total_questions} (${pct}%)!`);
+      try {
+        const created = await dataService.createBatch(
+          input,
+          user?.mode === 'supabase' ? user.id : undefined
+        );
+        setBatches((prev) => [created, ...prev]);
+        setSubtopics((prev) =>
+          prev.map((t) =>
+            t.id === input.subtopic_id ? { ...t, practiced_questions: true } : t
+          )
+        );
+        const pct = Math.round((input.correct_answers / input.total_questions) * 100);
+        showToast(`Bateria registrada: ${input.correct_answers}/${input.total_questions} (${pct}%)!`);
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao registrar bateria.'), 'error');
+        throw err;
+      }
     },
     [user, showToast]
   );
 
   const deleteBatch = useCallback(
     async (id: string) => {
-      await dataService.deleteBatch(id);
-      setBatches((prev) => prev.filter((b) => b.id !== id));
-      showToast('Bateria removida do histórico.', 'info');
+      try {
+        await dataService.deleteBatch(id);
+        setBatches((prev) => prev.filter((b) => b.id !== id));
+        showToast('Bateria removida do histórico.', 'info');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao remover bateria.'), 'error');
+        throw err;
+      }
     },
     [showToast]
   );
@@ -447,12 +511,17 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         | 'notes'
       >
     ) => {
-      const created = await dataService.createSession(
-        input,
-        user?.mode === 'supabase' ? user.id : undefined
-      );
-      setSessions((prev) => [...prev, created]);
-      showToast('Sessão agendada no calendário!');
+      try {
+        const created = await dataService.createSession(
+          input,
+          user?.mode === 'supabase' ? user.id : undefined
+        );
+        setSessions((prev) => [...prev, created]);
+        showToast('Sessão agendada no calendário!');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao agendar sessão.'), 'error');
+        throw err;
+      }
     },
     [user, showToast]
   );
@@ -474,26 +543,40 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         >
       >
     ) => {
-      const updated = await dataService.updateSession(id, patch);
-      setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      try {
+        const updated = await dataService.updateSession(id, patch);
+        setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)));
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao atualizar sessão.'), 'error');
+        throw err;
+      }
     },
-    []
+    [showToast]
   );
 
   const deleteSession = useCallback(
     async (id: string) => {
-      await dataService.deleteSession(id);
-      setSessions((prev) => prev.filter((s) => s.id !== id));
-      showToast('Sessão removida do calendário.', 'info');
+      try {
+        await dataService.deleteSession(id);
+        setSessions((prev) => prev.filter((s) => s.id !== id));
+        showToast('Sessão removida do calendário.', 'info');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao remover sessão.'), 'error');
+        throw err;
+      }
     },
     [showToast]
   );
 
   const loadSampleData = useCallback(async () => {
-    const sample = createSampleData();
-    await dataService.importSnapshot(sample, user?.mode === 'supabase' ? user.id : undefined);
-    await refreshData();
-    showToast('Dados de exemplo carregados com sucesso!');
+    try {
+      const sample = createSampleData();
+      await dataService.importSnapshot(sample, user?.mode === 'supabase' ? user.id : undefined);
+      await refreshData();
+      showToast('Dados de exemplo carregados com sucesso!');
+    } catch (err) {
+      showToast(formatDatabaseError(err, 'Erro ao carregar dados de exemplo.'), 'error');
+    }
   }, [user, refreshData, showToast]);
 
   const clearAllLocalData = useCallback(async () => {
@@ -510,9 +593,14 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const importData = useCallback(
     async (snapshot: AppDataSnapshot) => {
-      await dataService.importSnapshot(snapshot, user?.mode === 'supabase' ? user.id : undefined);
-      await refreshData();
-      showToast('Backup importado com sucesso!');
+      try {
+        await dataService.importSnapshot(snapshot, user?.mode === 'supabase' ? user.id : undefined);
+        await refreshData();
+        showToast('Backup importado com sucesso!');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao importar backup.'), 'error');
+        throw err;
+      }
     },
     [user, refreshData, showToast]
   );

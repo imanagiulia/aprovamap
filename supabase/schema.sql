@@ -130,6 +130,19 @@ create trigger trg_study_sessions_updated_at
   for each row execute function public.set_updated_at();
 
 -- ============================================================================
+-- Permissões da API (PostgREST) — Obrigatório para os papéis do Supabase
+-- ============================================================================
+grant usage on schema public to anon, authenticated;
+
+grant select, insert, update, delete on table public.subjects to authenticated;
+grant select, insert, update, delete on table public.subtopics to authenticated;
+grant select, insert, update, delete on table public.question_batches to authenticated;
+grant select, insert, update, delete on table public.study_sessions to authenticated;
+
+grant execute on function public.set_updated_at() to authenticated;
+grant execute on function public.mark_subtopic_practiced() to authenticated;
+
+-- ============================================================================
 -- Row Level Security (RLS): somente o usuário autenticado acessa seus dados
 -- ============================================================================
 alter table public.subjects enable row level security;
@@ -141,6 +154,7 @@ alter table public.study_sessions enable row level security;
 drop policy if exists "subjects_owner_all" on public.subjects;
 create policy "subjects_owner_all" on public.subjects
   for all
+  to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
@@ -148,6 +162,7 @@ create policy "subjects_owner_all" on public.subjects
 drop policy if exists "subtopics_owner_all" on public.subtopics;
 create policy "subtopics_owner_all" on public.subtopics
   for all
+  to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
@@ -155,6 +170,7 @@ create policy "subtopics_owner_all" on public.subtopics
 drop policy if exists "question_batches_owner_all" on public.question_batches;
 create policy "question_batches_owner_all" on public.question_batches
   for all
+  to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
@@ -162,5 +178,9 @@ create policy "question_batches_owner_all" on public.question_batches
 drop policy if exists "study_sessions_owner_all" on public.study_sessions;
 create policy "study_sessions_owner_all" on public.study_sessions
   for all
+  to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- Recarrega o cache de schema/permissões do PostgREST
+notify pgrst, 'reload schema';
