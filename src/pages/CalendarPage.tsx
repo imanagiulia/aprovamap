@@ -32,9 +32,12 @@ const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 export const CalendarPage: React.FC = () => {
   const {
+    exams,
     subjects,
     subtopics,
     sessions,
+    selectedExamId,
+    setSelectedExamId,
     createSession,
     updateSession,
     deleteSession,
@@ -64,6 +67,32 @@ export const CalendarPage: React.FC = () => {
 
   const today = todayISO();
 
+  const examMap = useMemo(() => new Map(exams.map((e) => [e.id, e])), [exams]);
+  const hasUnassigned = useMemo(
+    () => subjects.some((s) => !s.exam_id || !examMap.has(s.exam_id)),
+    [subjects, examMap]
+  );
+
+  const visibleSubjects = useMemo(() => {
+    if (selectedExamId === 'all') return subjects;
+    if (selectedExamId === 'unassigned') {
+      return subjects.filter((s) => !s.exam_id || !examMap.has(s.exam_id));
+    }
+    return subjects.filter((s) => s.exam_id === selectedExamId);
+  }, [subjects, selectedExamId, examMap]);
+
+  const visibleSubjectIds = useMemo(
+    () => new Set(visibleSubjects.map((s) => s.id)),
+    [visibleSubjects]
+  );
+
+  // Se a matéria selecionada não pertencer ao concurso filtrado, reseta para 'all'
+  useEffect(() => {
+    if (subjectFilter !== 'all' && !visibleSubjectIds.has(subjectFilter)) {
+      setSubjectFilter('all');
+    }
+  }, [subjectFilter, visibleSubjectIds]);
+
   // Abre modal automaticamente quando vem de um alerta de revisão ou atalho de matéria
   useEffect(() => {
     if (quickSchedule) {
@@ -81,6 +110,22 @@ export const CalendarPage: React.FC = () => {
   const subjectMap = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects]);
   const subtopicMap = useMemo(() => new Map(subtopics.map((t) => [t.id, t])), [subtopics]);
 
+  const groupedFilterOptions = useMemo(() => {
+    if (selectedExamId !== 'all' || exams.length === 0) return null;
+    const examIds = new Set(exams.map((e) => e.id));
+    const groups = exams
+      .map((exam) => ({
+        label: exam.name,
+        items: subjects.filter((s) => s.exam_id === exam.id),
+      }))
+      .filter((g) => g.items.length > 0);
+    const unassigned = subjects.filter((s) => !s.exam_id || !examIds.has(s.exam_id));
+    if (unassigned.length > 0) {
+      groups.push({ label: 'Sem concurso', items: unassigned });
+    }
+    return groups;
+  }, [selectedExamId, exams, subjects]);
+
   const days = useMemo(() => {
     if (view === 'month') {
       const start = startOfWeek(startOfMonth(cursorDate), { weekStartsOn: 0 });
@@ -92,14 +137,18 @@ export const CalendarPage: React.FC = () => {
     return eachDayOfInterval({ start, end });
   }, [cursorDate, view]);
 
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((s) => {
+      if (!visibleSubjectIds.has(s.subject_id)) return false;
+      if (subjectFilter !== 'all' && s.subject_id !== subjectFilter) return false;
+      return true;
+    });
+  }, [sessions, visibleSubjectIds, subjectFilter]);
+
   const sessionsByDate = useMemo(() => {
     const map = new Map<string, StudySession[]>();
-    const filtered =
-      subjectFilter === 'all'
-        ? sessions
-        : sessions.filter((s) => s.subject_id === subjectFilter);
 
-    for (const ses of filtered) {
+    for (const ses of filteredSessions) {
       const list = map.get(ses.scheduled_date) ?? [];
       list.push(ses);
       map.set(ses.scheduled_date, list);
@@ -110,15 +159,11 @@ export const CalendarPage: React.FC = () => {
     }
 
     return map;
-  }, [sessions, subjectFilter]);
+  }, [filteredSessions]);
 
   const periodSummary = useMemo(() => {
     const dateSet = new Set(days.map((d) => format(d, 'yyyy-MM-dd')));
-    const inPeriod = sessions.filter(
-      (s) =>
-        dateSet.has(s.scheduled_date) &&
-        (subjectFilter === 'all' || s.subject_id === subjectFilter)
-    );
+    const inPeriod = filteredSessions.filter((s) => dateSet.has(s.scheduled_date));
     const totalMinutes = inPeriod.reduce((acc, s) => acc + s.duration_minutes, 0);
     const completedCount = inPeriod.filter((s) => s.completed).length;
     return {
@@ -126,7 +171,7 @@ export const CalendarPage: React.FC = () => {
       completedCount,
       totalHours: Math.round((totalMinutes / 60) * 10) / 10,
     };
-  }, [days, sessions, subjectFilter]);
+  }, [days, filteredSessions]);
 
   const handlePrev = () => {
     setCursorDate((prev) => (view === 'month' ? subMonths(prev, 1) : subWeeks(prev, 1)));
@@ -139,7 +184,11 @@ export const CalendarPage: React.FC = () => {
   const handleOpenNewForDate = (dateIso: string) => {
     setEditingSession(null);
     setModalDefaultDate(dateIso);
-    setModalDefaultSubjectId(subjectFilter !== 'all' ? subjectFilter : subjects[0]?.id);
+    setModalDefaultSubjectId(
+      subjectFilter !== 'all'
+        ? subjectFilter
+        : visibleSubjects[0]?.id ?? subjects[0]?.id
+    );
     setModalDefaultSubtopicId(null);
     setModalDefaultType('theory');
     setModalDefaultNotes('');
@@ -182,6 +231,12 @@ export const CalendarPage: React.FC = () => {
           'dd/MM/yyyy',
           { locale: ptBR }
         )}`;
+
+  const modalSubjects = editingSession
+    ? subjects
+    : visibleSubjects.length > 0
+      ? visibleSubjects
+      : subjects;
 
   return (
     <div className="space-y-5">
@@ -230,7 +285,7 @@ export const CalendarPage: React.FC = () => {
           </h3>
         </div>
 
-        {/* Right Controls: Summary + Subject filter + View switcher */}
+        {/* Right Controls: Summary + Exam & Subject filters + View switcher */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
             <span>
@@ -246,17 +301,43 @@ export const CalendarPage: React.FC = () => {
             </span>
           </div>
 
+          {exams.length > 0 && (
+            <select
+              value={selectedExamId}
+              onChange={(e) => setSelectedExamId(e.target.value)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+            >
+              <option value="all">Todos os concursos</option>
+              {exams.map((exam) => (
+                <option key={exam.id} value={exam.id}>
+                  {exam.name}
+                </option>
+              ))}
+              {hasUnassigned && <option value="unassigned">Sem concurso</option>}
+            </select>
+          )}
+
           <select
             value={subjectFilter}
             onChange={(e) => setSubjectFilter(e.target.value)}
             className="px-3 py-1.5 rounded-lg border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium text-slate-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
           >
             <option value="all">Todas as matérias</option>
-            {subjects.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            {groupedFilterOptions
+              ? groupedFilterOptions.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))
+              : visibleSubjects.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
           </select>
 
           <div className="inline-flex p-0.5 rounded-lg bg-slate-200/60 dark:bg-slate-800">
@@ -359,6 +440,9 @@ export const CalendarPage: React.FC = () => {
                     <div className="space-y-1 flex-1">
                       {daySessions.map((ses) => {
                         const subject = subjectMap.get(ses.subject_id);
+                        const exam = subject?.exam_id
+                          ? examMap.get(subject.exam_id)
+                          : undefined;
                         const subtopic = ses.subtopic_id
                           ? subtopicMap.get(ses.subtopic_id)
                           : undefined;
@@ -381,6 +465,11 @@ export const CalendarPage: React.FC = () => {
                               e.stopPropagation();
                               handleOpenEdit(ses);
                             }}
+                            title={
+                              exam
+                                ? `${exam.name} • ${subject?.name ?? 'Matéria'}`
+                                : subject?.name
+                            }
                             className={`rounded-md px-2 py-1.5 border text-left transition-colors cursor-grab active:cursor-grabbing ${
                               ses.completed
                                 ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200/70 dark:border-slate-800 opacity-65'
@@ -390,6 +479,11 @@ export const CalendarPage: React.FC = () => {
                           >
                             <div className="flex items-start justify-between gap-1">
                               <div className="min-w-0 flex-1">
+                                {selectedExamId === 'all' && exams.length > 1 && exam && (
+                                  <span className="block text-[9px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500 truncate">
+                                    {exam.name}
+                                  </span>
+                                )}
                                 <span
                                   className={`block text-[11px] font-semibold truncate ${
                                     ses.completed
@@ -448,7 +542,7 @@ export const CalendarPage: React.FC = () => {
       {/* Session Modal */}
       <SessionModal
         isOpen={modalOpen}
-        subjects={subjects}
+        subjects={modalSubjects}
         subtopics={subtopics}
         editingSession={editingSession}
         defaultDate={modalDefaultDate}

@@ -29,6 +29,7 @@ export const QuestionBatchModal: React.FC = () => {
   const {
     batchModalSubtopicId,
     closeBatchModal,
+    exams,
     subtopics,
     subjects,
     batches,
@@ -53,6 +54,12 @@ export const QuestionBatchModal: React.FC = () => {
   const subject = useMemo(
     () => (subtopic ? subjects.find((s) => s.id === subtopic.subject_id) ?? null : null),
     [subjects, subtopic]
+  );
+
+  const exam = useMemo(
+    () =>
+      subject?.exam_id ? exams.find((e) => e.id === subject.exam_id) ?? null : null,
+    [exams, subject]
   );
 
   const subtopicBatches = useMemo(() => {
@@ -127,14 +134,24 @@ export const QuestionBatchModal: React.FC = () => {
         {/* Header */}
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-100 dark:border-slate-800">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
-              <span
-                className="w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: subject.color }}
-              />
-              {subject.name}
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {exam && (
+                <>
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                    {exam.name}
+                  </span>
+                  <span>•</span>
+                </>
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ backgroundColor: subject.color }}
+                />
+                {subject.name}
+              </span>
             </div>
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-1">
               {subtopic.title}
             </h3>
           </div>
@@ -282,7 +299,7 @@ export const QuestionBatchModal: React.FC = () => {
                   type="text"
                   value={source}
                   onChange={(e) => setSource(e.target.value)}
-                  placeholder="Ex.: Cebraspe, FGV..."
+                  placeholder={exam?.board ? `Ex.: ${exam.board}` : 'Ex.: Cebraspe, FGV...'}
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>

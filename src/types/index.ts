@@ -6,8 +6,20 @@ export type MasteryLevel = 'unrated' | 'critical' | 'basic' | 'good' | 'mastered
 
 export type ActiveTab = 'dashboard' | 'subjects' | 'calendar' | 'reviews' | 'settings';
 
+export interface Exam {
+  id: string;
+  name: string;
+  board: string;
+  exam_date: string; // YYYY-MM-DD or ''
+  description: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Subject {
   id: string;
+  exam_id: string | null;
   name: string;
   description: string;
   color: string;
@@ -73,15 +85,27 @@ export interface SubjectStats {
   basicCount: number;
 }
 
+export interface ExamStats {
+  subjectCount: number;
+  subtopicCount: number;
+  completedSubtopicCount: number;
+  totalQuestions: number;
+  correctAnswers: number;
+  accuracy: number | null;
+  mastery: MasteryLevel;
+}
+
 export interface ReviewAlertItem {
   subtopic: Subtopic;
   subject: Subject;
+  exam: Exam | null;
   stats: SubtopicStats;
   priority: 'high' | 'medium' | 'unpracticed';
   reason: string;
 }
 
 export interface AppDataSnapshot {
+  exams: Exam[];
   subjects: Subject[];
   subtopics: Subtopic[];
   batches: QuestionBatch[];

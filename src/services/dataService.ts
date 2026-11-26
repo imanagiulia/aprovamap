@@ -1,5 +1,6 @@
 import type {
   AppDataSnapshot,
+  Exam,
   QuestionBatch,
   StudySession,
   Subject,
@@ -14,6 +15,21 @@ interface LocalAuthStore {
   passwordHash: string;
   email: string;
   unlocked: boolean;
+}
+
+export function isSchemaMissingError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = 'code' in err ? String((err as { code?: unknown }).code ?? '') : '';
+  const message = 'message' in err ? String((err as { message?: unknown }).message ?? '').toLowerCase() : '';
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    code === 'PGRST205' ||
+    code === 'PGRST204' ||
+    message.includes('could not find the table') ||
+    message.includes('could not find the') ||
+    (message.includes('relation') && message.includes('does not exist'))
+  );
 }
 
 function generateId(): string {
@@ -31,7 +47,6 @@ async function sha256(text: string): Promise<string> {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
   }
-  // Fallback simples para ambientes sem SubtleCrypto
   let hash = 0;
   for (let i = 0; i < text.length; i++) {
     hash = (hash << 5) - hash + text.charCodeAt(i);
@@ -43,16 +58,26 @@ async function sha256(text: string): Promise<string> {
 function readLocalData(): AppDataSnapshot {
   try {
     const raw = localStorage.getItem(STORAGE_DATA_KEY);
-    if (!raw) return { subjects: [], subtopics: [], batches: [], sessions: [] };
+    if (!raw) return { exams: [], subjects: [], subtopics: [], batches: [], sessions: [] };
     const parsed = JSON.parse(raw) as Partial<AppDataSnapshot>;
     return {
-      subjects: parsed.subjects ?? [],
+      exams: (parsed.exams ?? []).map((e) => ({
+        ...e,
+        board: e.board ?? '',
+        exam_date: e.exam_date ?? '',
+        description: e.description ?? '',
+      })),
+      subjects: (parsed.subjects ?? []).map((s) => ({
+        ...s,
+        exam_id: s.exam_id ?? null,
+        description: s.description ?? '',
+      })),
       subtopics: parsed.subtopics ?? [],
       batches: parsed.batches ?? [],
       sessions: parsed.sessions ?? [],
     };
   } catch {
-    return { subjects: [], subtopics: [], batches: [], sessions: [] };
+    return { exams: [], subjects: [], subtopics: [], batches: [], sessions: [] };
   }
 }
 
@@ -133,9 +158,12 @@ export const localAuthService = {
 // Repositório de Dados Unificado (Supabase PostgreSQL OU Modo Local)
 // ============================================================================
 export const dataService = {
-  async loadAll(userId?: string): Promise<AppDataSnapshot> {
+  async loadAll(
+    userId?: string
+  ): Promise<AppDataSnapshot & { schemaNeedsMigration?: boolean }> {
     if (isSupabaseConfigured && supabase && userId) {
-      const [subRes, topRes, batRes, sesRes] = await Promise.all([
+      const [examRes, subRes, topRes, batRes, sesRes] = await Promise.all([
+        supabase.from('exams').select('*').order('created_at', { ascending: true }),
         supabase.from('subjects').select('*').order('created_at', { ascending: true }),
         supabase.from('subtopics').select('*').order('created_at', { ascending: true }),
         supabase
@@ -150,14 +178,41 @@ export const dataService = {
           .order('start_time', { ascending: true }),
       ]);
 
+      let schemaNeedsMigration = false;
+      if (examRes.error) {
+        if (isSchemaMissingError(examRes.error)) {
+          schemaNeedsMigration = true;
+        } else {
+          throw examRes.error;
+        }
+      }
+
       if (subRes.error) throw subRes.error;
       if (topRes.error) throw topRes.error;
       if (batRes.error) throw batRes.error;
       if (sesRes.error) throw sesRes.error;
 
+      // Caso a tabela exams exista mas subjects ainda não tenha exam_id
+      if (
+        !schemaNeedsMigration &&
+        subRes.data &&
+        subRes.data.length > 0 &&
+        !('exam_id' in subRes.data[0])
+      ) {
+        schemaNeedsMigration = true;
+      }
+
       return {
+        schemaNeedsMigration,
+        exams: (examRes.data ?? []).map((r) => ({
+          ...r,
+          board: r.board ?? '',
+          exam_date: r.exam_date ?? '',
+          description: r.description ?? '',
+        })) as Exam[],
         subjects: (subRes.data ?? []).map((r) => ({
           ...r,
+          exam_id: r.exam_id ?? null,
           description: r.description ?? '',
         })) as Subject[],
         subtopics: (topRes.data ?? []).map((r) => ({
@@ -181,28 +236,135 @@ export const dataService = {
   },
 
   async replaceLocalSnapshot(snapshot: AppDataSnapshot): Promise<void> {
-    writeLocalData(snapshot);
+    writeLocalData({
+      exams: snapshot.exams ?? [],
+      subjects: snapshot.subjects ?? [],
+      subtopics: snapshot.subtopics ?? [],
+      batches: snapshot.batches ?? [],
+      sessions: snapshot.sessions ?? [],
+    });
+  },
+
+  // --- EXAMS (CONCURSOS) ---
+  async createExam(
+    input: Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>,
+    userId?: string
+  ): Promise<Exam> {
+    if (isSupabaseConfigured && supabase && userId) {
+      const { data, error } = await supabase
+        .from('exams')
+        .insert({
+          ...input,
+          exam_date: input.exam_date || null,
+          user_id: userId,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return {
+        ...data,
+        board: data.board ?? '',
+        exam_date: data.exam_date ?? '',
+        description: data.description ?? '',
+      } as Exam;
+    }
+
+    const now = new Date().toISOString();
+    const created: Exam = {
+      id: generateId(),
+      ...input,
+      created_at: now,
+      updated_at: now,
+    };
+    const db = readLocalData();
+    db.exams.push(created);
+    writeLocalData(db);
+    return created;
+  },
+
+  async updateExam(
+    id: string,
+    patch: Partial<Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>>
+  ): Promise<Exam> {
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase
+        .from('exams')
+        .update({
+          ...patch,
+          ...(patch.exam_date !== undefined ? { exam_date: patch.exam_date || null } : {}),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return {
+        ...data,
+        board: data.board ?? '',
+        exam_date: data.exam_date ?? '',
+        description: data.description ?? '',
+      } as Exam;
+    }
+
+    const db = readLocalData();
+    const idx = db.exams.findIndex((e) => e.id === id);
+    if (idx === -1) throw new Error('Concurso não encontrado.');
+    db.exams[idx] = {
+      ...db.exams[idx],
+      ...patch,
+      updated_at: new Date().toISOString(),
+    };
+    writeLocalData(db);
+    return db.exams[idx];
+  },
+
+  async deleteExam(id: string): Promise<void> {
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase.from('exams').delete().eq('id', id);
+      if (error) throw error;
+      return;
+    }
+
+    const db = readLocalData();
+    const subjectIds = new Set(db.subjects.filter((s) => s.exam_id === id).map((s) => s.id));
+    const subtopicIds = new Set(
+      db.subtopics.filter((t) => subjectIds.has(t.subject_id)).map((t) => t.id)
+    );
+    db.exams = db.exams.filter((e) => e.id !== id);
+    db.subjects = db.subjects.filter((s) => s.exam_id !== id);
+    db.subtopics = db.subtopics.filter((t) => !subjectIds.has(t.subject_id));
+    db.batches = db.batches.filter((b) => !subtopicIds.has(b.subtopic_id));
+    db.sessions = db.sessions.filter((s) => !subjectIds.has(s.subject_id));
+    writeLocalData(db);
   },
 
   // --- SUBJECTS ---
   async createSubject(
-    input: Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>,
+    input: Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>,
     userId?: string
   ): Promise<Subject> {
     if (isSupabaseConfigured && supabase && userId) {
       const { data, error } = await supabase
         .from('subjects')
-        .insert({ ...input, user_id: userId })
+        .insert({
+          ...input,
+          exam_id: input.exam_id || null,
+          user_id: userId,
+        })
         .select()
         .single();
       if (error) throw error;
-      return { ...data, description: data.description ?? '' } as Subject;
+      return {
+        ...data,
+        exam_id: data.exam_id ?? null,
+        description: data.description ?? '',
+      } as Subject;
     }
 
     const now = new Date().toISOString();
     const created: Subject = {
       id: generateId(),
       ...input,
+      exam_id: input.exam_id || null,
       created_at: now,
       updated_at: now,
     };
@@ -214,17 +376,26 @@ export const dataService = {
 
   async updateSubject(
     id: string,
-    patch: Partial<Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>>
+    patch: Partial<
+      Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>
+    >
   ): Promise<Subject> {
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase
         .from('subjects')
-        .update(patch)
+        .update({
+          ...patch,
+          ...(patch.exam_id !== undefined ? { exam_id: patch.exam_id || null } : {}),
+        })
         .eq('id', id)
         .select()
         .single();
       if (error) throw error;
-      return { ...data, description: data.description ?? '' } as Subject;
+      return {
+        ...data,
+        exam_id: data.exam_id ?? null,
+        description: data.description ?? '',
+      } as Subject;
     }
 
     const db = readLocalData();
@@ -233,6 +404,7 @@ export const dataService = {
     db.subjects[idx] = {
       ...db.subjects[idx],
       ...patch,
+      ...(patch.exam_id !== undefined ? { exam_id: patch.exam_id || null } : {}),
       updated_at: new Date().toISOString(),
     };
     writeLocalData(db);
@@ -488,11 +660,26 @@ export const dataService = {
 
   async importSnapshot(snapshot: AppDataSnapshot, userId?: string): Promise<void> {
     if (isSupabaseConfigured && supabase && userId) {
-      // Importa em ordem de dependência (mapeando IDs antigos para novos UUIDs do PostgreSQL)
+      const examIdMap = new Map<string, string>();
+      for (const e of snapshot.exams ?? []) {
+        const created = await this.createExam(
+          {
+            name: e.name,
+            board: e.board || '',
+            exam_date: e.exam_date || '',
+            description: e.description || '',
+            color: e.color || '#4F46E5',
+          },
+          userId
+        );
+        examIdMap.set(e.id, created.id);
+      }
+
       const subjectIdMap = new Map<string, string>();
       for (const s of snapshot.subjects) {
         const created = await this.createSubject(
           {
+            exam_id: s.exam_id ? (examIdMap.get(s.exam_id) ?? null) : null,
             name: s.name,
             description: s.description || '',
             color: s.color || '#4F46E5',
@@ -556,6 +743,6 @@ export const dataService = {
       return;
     }
 
-    writeLocalData(snapshot);
+    await this.replaceLocalSnapshot(snapshot);
   },
 };

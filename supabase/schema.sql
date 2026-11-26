@@ -19,11 +19,34 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- 0. Tabela de Concursos (exams)
+-- ----------------------------------------------------------------------------
+create table if not exists public.exams (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) > 0),
+  board text,
+  exam_date date,
+  description text,
+  color text not null default '#4F46E5',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_exams_user_id on public.exams(user_id);
+
+drop trigger if exists trg_exams_updated_at on public.exams;
+create trigger trg_exams_updated_at
+  before update on public.exams
+  for each row execute function public.set_updated_at();
+
+-- ----------------------------------------------------------------------------
 -- 1. Tabela de Matérias (subjects)
 -- ----------------------------------------------------------------------------
 create table if not exists public.subjects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  exam_id uuid references public.exams(id) on delete cascade,
   name text not null check (char_length(trim(name)) > 0),
   description text,
   color text not null default '#4F46E5',
@@ -32,7 +55,12 @@ create table if not exists public.subjects (
   updated_at timestamptz not null default now()
 );
 
+-- Garante a coluna exam_id caso a tabela subjects já existisse anteriormente
+alter table public.subjects
+  add column if not exists exam_id uuid references public.exams(id) on delete cascade;
+
 create index if not exists idx_subjects_user_id on public.subjects(user_id);
+create index if not exists idx_subjects_exam_id on public.subjects(exam_id);
 
 drop trigger if exists trg_subjects_updated_at on public.subjects;
 create trigger trg_subjects_updated_at
@@ -134,6 +162,7 @@ create trigger trg_study_sessions_updated_at
 -- ============================================================================
 grant usage on schema public to anon, authenticated;
 
+grant select, insert, update, delete on table public.exams to authenticated;
 grant select, insert, update, delete on table public.subjects to authenticated;
 grant select, insert, update, delete on table public.subtopics to authenticated;
 grant select, insert, update, delete on table public.question_batches to authenticated;
@@ -145,10 +174,19 @@ grant execute on function public.mark_subtopic_practiced() to authenticated;
 -- ============================================================================
 -- Row Level Security (RLS): somente o usuário autenticado acessa seus dados
 -- ============================================================================
+alter table public.exams enable row level security;
 alter table public.subjects enable row level security;
 alter table public.subtopics enable row level security;
 alter table public.question_batches enable row level security;
 alter table public.study_sessions enable row level security;
+
+-- Exams policies
+drop policy if exists "exams_owner_all" on public.exams;
+create policy "exams_owner_all" on public.exams
+  for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 -- Subjects policies
 drop policy if exists "subjects_owner_all" on public.subjects;

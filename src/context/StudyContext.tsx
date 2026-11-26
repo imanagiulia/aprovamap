@@ -3,13 +3,14 @@ import type {
   ActiveTab,
   AppDataSnapshot,
   AuthUser,
+  Exam,
   QuestionBatch,
   ReviewAlertItem,
   StudySession,
   Subject,
   Subtopic,
 } from '../types';
-import { dataService, localAuthService } from '../services/dataService';
+import { dataService, isSchemaMissingError, localAuthService } from '../services/dataService';
 import { isSupabaseConfigured, supabase } from '../services/supabaseClient';
 import { computeReviewAlerts } from '../utils/mastery';
 import { createSampleData } from '../utils/sampleData';
@@ -28,17 +29,24 @@ interface QuickSchedulePayload {
   notes?: string;
 }
 
+export type ExamFilterValue = 'all' | 'unassigned' | string;
+
 interface StudyContextValue {
   user: AuthUser | null;
   authLoading: boolean;
   dataLoading: boolean;
   isSupabaseMode: boolean;
+  schemaNeedsMigration: boolean;
   darkMode: boolean;
   toggleDarkMode: () => void;
 
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
 
+  selectedExamId: ExamFilterValue;
+  setSelectedExamId: (examId: ExamFilterValue) => void;
+
+  exams: Exam[];
   subjects: Subject[];
   subtopics: Subtopic[];
   batches: QuestionBatch[];
@@ -57,12 +65,23 @@ interface StudyContextValue {
 
   // CRUD actions
   refreshData: () => Promise<void>;
+  createExam: (
+    input: Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>
+  ) => Promise<Exam>;
+  updateExam: (
+    id: string,
+    patch: Partial<Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>>
+  ) => Promise<void>;
+  deleteExam: (id: string) => Promise<void>;
+
   createSubject: (
-    input: Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>
+    input: Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>
   ) => Promise<Subject>;
   updateSubject: (
     id: string,
-    patch: Partial<Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>>
+    patch: Partial<
+      Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>
+    >
   ) => Promise<void>;
   deleteSubject: (id: string) => Promise<void>;
 
@@ -142,8 +161,8 @@ export function formatDatabaseError(err: unknown, fallback: string): string {
     if (code === '42501' || message.toLowerCase().includes('permission denied')) {
       return 'Permissão negada no Supabase (erro 42501). Execute os comandos GRANT do supabase/schema.sql no SQL Editor.';
     }
-    if (code === '42P01' || code === 'PGRST205' || message.toLowerCase().includes('could not find the table')) {
-      return 'Tabelas não encontradas no Supabase. Execute o arquivo supabase/schema.sql no SQL Editor.';
+    if (isSchemaMissingError(err)) {
+      return 'Tabela/coluna de Concursos não encontrada no Supabase. Execute o script supabase/migration_exams.sql no SQL Editor.';
     }
     if (message.toLowerCase().includes('row-level security')) {
       return 'Acesso bloqueado pelas políticas RLS do Supabase. Faça login novamente ou revise o schema.sql.';
@@ -159,8 +178,12 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(false);
+  const [schemaNeedsMigration, setSchemaNeedsMigration] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [selectedExamId, setSelectedExamId] = useState<ExamFilterValue>('all');
+
+  const [exams, setExams] = useState<Exam[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [subtopics, setSubtopics] = useState<Subtopic[]>([]);
   const [batches, setBatches] = useState<QuestionBatch[]>([]);
@@ -240,7 +263,6 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           listener.subscription.unsubscribe();
         };
       } else {
-        // Modo Local com bloqueio por senha
         if (localAuthService.isUnlocked()) {
           setUser({
             id: 'local-user',
@@ -265,12 +287,17 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDataLoading(true);
     try {
       const data = await dataService.loadAll(user.mode === 'supabase' ? user.id : undefined);
+      setSchemaNeedsMigration(Boolean(data.schemaNeedsMigration));
+      setExams(data.exams);
       setSubjects(data.subjects);
       setSubtopics(data.subtopics);
       setBatches(data.batches);
       setSessions(data.sessions);
     } catch (err) {
       console.error(err);
+      if (isSchemaMissingError(err)) {
+        setSchemaNeedsMigration(true);
+      }
       showToast(
         formatDatabaseError(err, 'Erro ao carregar os dados. Verifique a conexão.'),
         'error'
@@ -284,12 +311,28 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (user) {
       refreshData();
     } else {
+      setExams([]);
       setSubjects([]);
       setSubtopics([]);
       setBatches([]);
       setSessions([]);
+      setSelectedExamId('all');
+      setSchemaNeedsMigration(false);
     }
   }, [user, refreshData]);
+
+  // Se o filtro de concurso selecionado deixar de existir, volta para 'all'
+  useEffect(() => {
+    if (selectedExamId === 'all') return;
+    if (selectedExamId === 'unassigned') {
+      const hasUnassigned = subjects.some((s) => !s.exam_id);
+      if (!hasUnassigned) setSelectedExamId('all');
+      return;
+    }
+    if (!exams.some((e) => e.id === selectedExamId)) {
+      setSelectedExamId('all');
+    }
+  }, [exams, subjects, selectedExamId]);
 
   // Auth actions
   const signInSupabase = useCallback(async (email: string, password: string) => {
@@ -343,9 +386,73 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setActiveTab('dashboard');
   }, []);
 
-  // CRUD actions
+  // --- CRUD EXAMS ---
+  const createExam = useCallback(
+    async (input: Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>) => {
+      try {
+        const created = await dataService.createExam(
+          input,
+          user?.mode === 'supabase' ? user.id : undefined
+        );
+        setExams((prev) => [...prev, created]);
+        showToast(`Concurso "${created.name}" cadastrado!`);
+        return created;
+      } catch (err) {
+        if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
+        showToast(formatDatabaseError(err, 'Erro ao cadastrar concurso.'), 'error');
+        throw err;
+      }
+    },
+    [user, showToast]
+  );
+
+  const updateExam = useCallback(
+    async (
+      id: string,
+      patch: Partial<Pick<Exam, 'name' | 'board' | 'exam_date' | 'description' | 'color'>>
+    ) => {
+      try {
+        const updated = await dataService.updateExam(id, patch);
+        setExams((prev) => prev.map((e) => (e.id === id ? updated : e)));
+        showToast('Concurso atualizado.');
+      } catch (err) {
+        if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
+        showToast(formatDatabaseError(err, 'Erro ao atualizar concurso.'), 'error');
+        throw err;
+      }
+    },
+    [showToast]
+  );
+
+  const deleteExam = useCallback(
+    async (id: string) => {
+      try {
+        await dataService.deleteExam(id);
+        const removedSubjectIds = new Set(
+          subjects.filter((s) => s.exam_id === id).map((s) => s.id)
+        );
+        const removedSubtopicIds = new Set(
+          subtopics.filter((t) => removedSubjectIds.has(t.subject_id)).map((t) => t.id)
+        );
+        setExams((prev) => prev.filter((e) => e.id !== id));
+        setSubjects((prev) => prev.filter((s) => s.exam_id !== id));
+        setSubtopics((prev) => prev.filter((t) => !removedSubjectIds.has(t.subject_id)));
+        setBatches((prev) => prev.filter((b) => !removedSubtopicIds.has(b.subtopic_id)));
+        setSessions((prev) => prev.filter((s) => !removedSubjectIds.has(s.subject_id)));
+        showToast('Concurso excluído.', 'info');
+      } catch (err) {
+        showToast(formatDatabaseError(err, 'Erro ao excluir concurso.'), 'error');
+        throw err;
+      }
+    },
+    [subjects, subtopics, showToast]
+  );
+
+  // --- CRUD SUBJECTS ---
   const createSubject = useCallback(
-    async (input: Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>) => {
+    async (
+      input: Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>
+    ) => {
       try {
         const created = await dataService.createSubject(
           input,
@@ -355,6 +462,7 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         showToast(`Matéria "${created.name}" cadastrada!`);
         return created;
       } catch (err) {
+        if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
         showToast(formatDatabaseError(err, 'Erro ao cadastrar matéria.'), 'error');
         throw err;
       }
@@ -365,13 +473,16 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateSubject = useCallback(
     async (
       id: string,
-      patch: Partial<Pick<Subject, 'name' | 'description' | 'color' | 'target_accuracy'>>
+      patch: Partial<
+        Pick<Subject, 'exam_id' | 'name' | 'description' | 'color' | 'target_accuracy'>
+      >
     ) => {
       try {
         const updated = await dataService.updateSubject(id, patch);
         setSubjects((prev) => prev.map((s) => (s.id === id ? updated : s)));
         showToast('Matéria atualizada.');
       } catch (err) {
+        if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
         showToast(formatDatabaseError(err, 'Erro ao atualizar matéria.'), 'error');
         throw err;
       }
@@ -575,6 +686,7 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await refreshData();
       showToast('Dados de exemplo carregados com sucesso!');
     } catch (err) {
+      if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
       showToast(formatDatabaseError(err, 'Erro ao carregar dados de exemplo.'), 'error');
     }
   }, [user, refreshData, showToast]);
@@ -582,6 +694,7 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const clearAllLocalData = useCallback(async () => {
     if (isSupabaseConfigured) return;
     await dataService.replaceLocalSnapshot({
+      exams: [],
       subjects: [],
       subtopics: [],
       batches: [],
@@ -598,16 +711,16 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         await refreshData();
         showToast('Backup importado com sucesso!');
       } catch (err) {
+        if (isSchemaMissingError(err)) setSchemaNeedsMigration(true);
         showToast(formatDatabaseError(err, 'Erro ao importar backup.'), 'error');
-        throw err;
       }
     },
     [user, refreshData, showToast]
   );
 
   const reviewAlerts = useMemo(
-    () => computeReviewAlerts(subjects, subtopics, batches),
-    [subjects, subtopics, batches]
+    () => computeReviewAlerts(subjects, subtopics, batches, exams),
+    [subjects, subtopics, batches, exams]
   );
 
   const openBatchModal = useCallback((subtopicId: string) => {
@@ -632,10 +745,14 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     authLoading,
     dataLoading,
     isSupabaseMode: isSupabaseConfigured,
+    schemaNeedsMigration,
     darkMode,
     toggleDarkMode,
     activeTab,
     setActiveTab,
+    selectedExamId,
+    setSelectedExamId,
+    exams,
     subjects,
     subtopics,
     batches,
@@ -649,6 +766,9 @@ export const StudyProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     unlockLocalAccess,
     signOut,
     refreshData,
+    createExam,
+    updateExam,
+    deleteExam,
     createSubject,
     updateSubject,
     deleteSubject,

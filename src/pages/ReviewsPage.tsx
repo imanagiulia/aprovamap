@@ -6,30 +6,71 @@ import { formatPercent, MASTERY_META } from '../utils/mastery';
 type AlertFilter = 'all' | 'high' | 'medium' | 'unpracticed';
 
 export const ReviewsPage: React.FC = () => {
-  const { reviewAlerts, openQuickSchedule } = useStudy();
+  const {
+    exams,
+    subjects,
+    reviewAlerts,
+    selectedExamId,
+    setSelectedExamId,
+    openQuickSchedule,
+  } = useStudy();
   const [filter, setFilter] = useState<AlertFilter>('all');
+
+  const examIds = useMemo(() => new Set(exams.map((e) => e.id)), [exams]);
+  const hasUnassigned = useMemo(
+    () => subjects.some((s) => !s.exam_id || !examIds.has(s.exam_id)),
+    [subjects, examIds]
+  );
+
+  const examFilteredAlerts = useMemo(() => {
+    if (selectedExamId === 'all') return reviewAlerts;
+    if (selectedExamId === 'unassigned') {
+      return reviewAlerts.filter(
+        (a) => !a.subject.exam_id || !examIds.has(a.subject.exam_id)
+      );
+    }
+    return reviewAlerts.filter((a) => a.subject.exam_id === selectedExamId);
+  }, [reviewAlerts, selectedExamId, examIds]);
 
   const counts = useMemo(
     () => ({
-      all: reviewAlerts.length,
-      high: reviewAlerts.filter((a) => a.priority === 'high').length,
-      medium: reviewAlerts.filter((a) => a.priority === 'medium').length,
-      unpracticed: reviewAlerts.filter((a) => a.priority === 'unpracticed').length,
+      all: examFilteredAlerts.length,
+      high: examFilteredAlerts.filter((a) => a.priority === 'high').length,
+      medium: examFilteredAlerts.filter((a) => a.priority === 'medium').length,
+      unpracticed: examFilteredAlerts.filter((a) => a.priority === 'unpracticed').length,
     }),
-    [reviewAlerts]
+    [examFilteredAlerts]
   );
 
   const visibleAlerts = useMemo(() => {
-    if (filter === 'all') return reviewAlerts;
-    return reviewAlerts.filter((a) => a.priority === filter);
-  }, [reviewAlerts, filter]);
+    if (filter === 'all') return examFilteredAlerts;
+    return examFilteredAlerts.filter((a) => a.priority === filter);
+  }, [examFilteredAlerts, filter]);
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
-        Alertas de Revisão
-      </h2>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+          Alertas de Revisão
+        </h2>
+
+        {exams.length > 0 && (
+          <select
+            value={selectedExamId}
+            onChange={(e) => setSelectedExamId(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+          >
+            <option value="all">Todos os concursos</option>
+            {exams.map((exam) => (
+              <option key={exam.id} value={exam.id}>
+                {exam.name}
+              </option>
+            ))}
+            {hasUnassigned && <option value="unassigned">Sem concurso</option>}
+          </select>
+        )}
+      </div>
 
       {/* Filter Pills */}
       <div className="flex flex-wrap gap-1.5">
@@ -86,12 +127,22 @@ export const ReviewsPage: React.FC = () => {
                 className="px-4 sm:px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               >
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: item.subject.color }}
-                    />
-                    <span className="truncate">{item.subject.name}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                    {item.exam && (
+                      <>
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium text-slate-600 dark:text-slate-300">
+                          {item.exam.name}
+                        </span>
+                        <span>•</span>
+                      </>
+                    )}
+                    <span className="inline-flex items-center gap-1.5 min-w-0">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: item.subject.color }}
+                      />
+                      <span className="truncate">{item.subject.name}</span>
+                    </span>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5">

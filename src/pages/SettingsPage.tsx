@@ -25,6 +25,7 @@ export const SettingsPage: React.FC = () => {
     isSupabaseMode,
     darkMode,
     toggleDarkMode,
+    exams,
     subjects,
     subtopics,
     batches,
@@ -44,7 +45,7 @@ export const SettingsPage: React.FC = () => {
   const [pwdMessage, setPwdMessage] = useState<string | null>(null);
 
   const handleExportBackup = () => {
-    const payload: AppDataSnapshot = { subjects, subtopics, batches, sessions };
+    const payload: AppDataSnapshot = { exams, subjects, subtopics, batches, sessions };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: 'application/json',
     });
@@ -62,11 +63,12 @@ export const SettingsPage: React.FC = () => {
     if (!file) return;
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as AppDataSnapshot;
+      const parsed = JSON.parse(text) as Partial<AppDataSnapshot>;
       if (!Array.isArray(parsed.subjects) || !Array.isArray(parsed.subtopics)) {
         throw new Error('Arquivo de backup inválido.');
       }
       await importData({
+        exams: parsed.exams ?? [],
         subjects: parsed.subjects ?? [],
         subtopics: parsed.subtopics ?? [],
         batches: parsed.batches ?? [],
@@ -128,9 +130,9 @@ export const SettingsPage: React.FC = () => {
                   : 'Rodando em Modo Local (Navegador)'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Usuário atual: <strong>{user?.email}</strong> • {subjects.length} matérias,{' '}
-                {subtopics.length} subtópicos, {batches.length} baterias e {sessions.length}{' '}
-                sessões.
+                Usuário atual: <strong>{user?.email}</strong> • {exams.length} concursos,{' '}
+                {subjects.length} matérias, {subtopics.length} subtópicos, {batches.length}{' '}
+                baterias e {sessions.length} sessões.
               </p>
             </div>
           </div>
@@ -223,7 +225,7 @@ export const SettingsPage: React.FC = () => {
             onClick={async () => {
               if (
                 window.confirm(
-                  'Carregar matérias, baterias e sessões de exemplo de concurso?'
+                  'Carregar concursos, matérias, baterias e sessões de exemplo?'
                 )
               ) {
                 await loadSampleData();

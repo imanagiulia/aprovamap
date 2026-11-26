@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import type { SessionType, StudySession, Subject, Subtopic } from '../types';
 import { SESSION_TYPE_META, todayISO } from '../utils/mastery';
-import { formatDatabaseError } from '../context/StudyContext';
+import { formatDatabaseError, useStudy } from '../context/StudyContext';
 
 interface SessionModalProps {
   isOpen: boolean;
@@ -42,6 +42,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   onSave,
   onDelete,
 }) => {
+  const { exams } = useStudy();
   const [subjectId, setSubjectId] = useState('');
   const [subtopicId, setSubtopicId] = useState<string>('');
   const [scheduledDate, setScheduledDate] = useState(todayISO());
@@ -87,12 +88,28 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     subjects,
   ]);
 
+  const groupedSubjects = useMemo(() => {
+    if (exams.length === 0) return null;
+    const examIds = new Set(exams.map((e) => e.id));
+    const groups = exams
+      .map((exam) => ({
+        label: exam.board ? `${exam.name} (${exam.board})` : exam.name,
+        items: subjects.filter((s) => s.exam_id === exam.id),
+      }))
+      .filter((g) => g.items.length > 0);
+
+    const unassigned = subjects.filter((s) => !s.exam_id || !examIds.has(s.exam_id));
+    if (unassigned.length > 0) {
+      groups.push({ label: 'Sem concurso vinculado', items: unassigned });
+    }
+    return groups;
+  }, [exams, subjects]);
+
   const filteredSubtopics = useMemo(
     () => subtopics.filter((t) => t.subject_id === subjectId),
     [subtopics, subjectId]
   );
 
-  // Limpa subtópico se trocar para uma matéria que não o contém
   useEffect(() => {
     if (subtopicId && !filteredSubtopics.some((t) => t.id === subtopicId)) {
       setSubtopicId('');
@@ -149,7 +166,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           )}
           {subjects.length === 0 ? (
             <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
-              Cadastre ao menos uma matéria primeiro na aba <strong>Matérias</strong> para montar seu cronograma.
+              Cadastre ao menos um concurso e uma matéria na aba <strong>Matérias</strong> para montar seu cronograma.
             </div>
           ) : (
             <>
@@ -164,11 +181,21 @@ export const SessionModal: React.FC<SessionModalProps> = ({
                     onChange={(e) => setSubjectId(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                   >
-                    {subjects.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
+                    {groupedSubjects
+                      ? groupedSubjects.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.items.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))
+                      : subjects.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
                   </select>
                 </div>
 

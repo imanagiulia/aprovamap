@@ -1,4 +1,6 @@
 import type {
+  Exam,
+  ExamStats,
   MasteryLevel,
   QuestionBatch,
   ReviewAlertItem,
@@ -242,24 +244,62 @@ export function computeSubjectStats(
   };
 }
 
-export function computeReviewAlerts(
+export function computeExamStats(
+  examId: string | null,
   subjects: Subject[],
   subtopics: Subtopic[],
   batches: QuestionBatch[]
+): ExamStats {
+  const examSubjects = subjects.filter((s) => (s.exam_id ?? null) === examId);
+  let subtopicCount = 0;
+  let completedSubtopicCount = 0;
+  let totalQuestions = 0;
+  let correctAnswers = 0;
+
+  for (const subj of examSubjects) {
+    const st = computeSubjectStats(subj.id, subtopics, batches);
+    subtopicCount += st.subtopicCount;
+    completedSubtopicCount += st.completedSubtopicCount;
+    totalQuestions += st.totalQuestions;
+    correctAnswers += st.correctAnswers;
+  }
+
+  const accuracy =
+    totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 1000) / 10 : null;
+
+  return {
+    subjectCount: examSubjects.length,
+    subtopicCount,
+    completedSubtopicCount,
+    totalQuestions,
+    correctAnswers,
+    accuracy,
+    mastery: getMasteryLevel(accuracy),
+  };
+}
+
+export function computeReviewAlerts(
+  subjects: Subject[],
+  subtopics: Subtopic[],
+  batches: QuestionBatch[],
+  exams: Exam[] = []
 ): ReviewAlertItem[] {
   const subjectMap = new Map(subjects.map((s) => [s.id, s]));
+  const examMap = new Map(exams.map((e) => [e.id, e]));
   const alerts: ReviewAlertItem[] = [];
 
   for (const sub of subtopics) {
     const subject = subjectMap.get(sub.subject_id);
     if (!subject) continue;
 
+    const exam = subject.exam_id ? (examMap.get(subject.exam_id) ?? null) : null;
     const stats = computeSubtopicStats(sub.id, batches);
 
     if (stats.mastery === 'critical') {
       alerts.push({
         subtopic: sub,
         subject,
+        exam,
         stats,
         priority: 'high',
         reason: `Taxa crítica de ${stats.accuracy?.toFixed(1)}% (${stats.correctAnswers}/${stats.totalQuestions} acertos) — abaixo de 50%.`,
@@ -268,6 +308,7 @@ export function computeReviewAlerts(
       alerts.push({
         subtopic: sub,
         subject,
+        exam,
         stats,
         priority: 'medium',
         reason: `Desempenho básico de ${stats.accuracy?.toFixed(1)}% (${stats.correctAnswers}/${stats.totalQuestions}) — meta da matéria: ${subject.target_accuracy}%.`,
@@ -280,6 +321,7 @@ export function computeReviewAlerts(
       alerts.push({
         subtopic: sub,
         subject,
+        exam,
         stats,
         priority: 'unpracticed',
         reason: 'Conteúdo já iniciado, mas ainda sem resolução de questões registrada.',
@@ -324,4 +366,19 @@ export function addDaysISO(baseIso: string, days: number): string {
   const mm = String(dt.getMonth() + 1).padStart(2, '0');
   const dd = String(dt.getDate()).padStart(2, '0');
   return `${yy}-${mm}-${dd}`;
+}
+
+export function daysUntilISO(targetIso: string): number | null {
+  if (!targetIso) return null;
+  const [ty, tm, td] = targetIso.split('-').map(Number);
+  if (!ty || !tm || !td) return null;
+  const [cy, cm, cd] = todayISO().split('-').map(Number);
+  const target = new Date(ty, tm - 1, td);
+  const current = new Date(cy, cm - 1, cd);
+  return Math.round((target.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function formatDateBR(iso: string): string {
+  if (!iso) return '';
+  return iso.split('-').reverse().join('/');
 }

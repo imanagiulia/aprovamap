@@ -30,11 +30,14 @@ import {
 
 export const DashboardPage: React.FC = () => {
   const {
+    exams,
     subjects,
     subtopics,
     batches,
     sessions,
     reviewAlerts,
+    selectedExamId,
+    setSelectedExamId,
     setActiveTab,
     openQuickSchedule,
     updateSession,
@@ -43,22 +46,66 @@ export const DashboardPage: React.FC = () => {
 
   const today = todayISO();
 
+  const examMap = useMemo(() => new Map(exams.map((e) => [e.id, e])), [exams]);
+  const hasUnassigned = useMemo(
+    () => subjects.some((s) => !s.exam_id || !examMap.has(s.exam_id)),
+    [subjects, examMap]
+  );
+
+  const visibleSubjects = useMemo(() => {
+    if (selectedExamId === 'all') return subjects;
+    if (selectedExamId === 'unassigned') {
+      return subjects.filter((s) => !s.exam_id || !examMap.has(s.exam_id));
+    }
+    return subjects.filter((s) => s.exam_id === selectedExamId);
+  }, [subjects, selectedExamId, examMap]);
+
+  const visibleSubjectIds = useMemo(
+    () => new Set(visibleSubjects.map((s) => s.id)),
+    [visibleSubjects]
+  );
+
+  const visibleSubtopics = useMemo(
+    () => subtopics.filter((t) => visibleSubjectIds.has(t.subject_id)),
+    [subtopics, visibleSubjectIds]
+  );
+
+  const visibleSubtopicIds = useMemo(
+    () => new Set(visibleSubtopics.map((t) => t.id)),
+    [visibleSubtopics]
+  );
+
+  const visibleBatches = useMemo(
+    () => batches.filter((b) => visibleSubtopicIds.has(b.subtopic_id)),
+    [batches, visibleSubtopicIds]
+  );
+
+  const visibleSessions = useMemo(
+    () => sessions.filter((s) => visibleSubjectIds.has(s.subject_id)),
+    [sessions, visibleSubjectIds]
+  );
+
+  const visibleAlerts = useMemo(
+    () => reviewAlerts.filter((a) => visibleSubjectIds.has(a.subject.id)),
+    [reviewAlerts, visibleSubjectIds]
+  );
+
   const globalStats = useMemo(() => {
-    const totalQuestions = batches.reduce((acc, b) => acc + b.total_questions, 0);
-    const totalCorrect = batches.reduce((acc, b) => acc + b.correct_answers, 0);
+    const totalQuestions = visibleBatches.reduce((acc, b) => acc + b.total_questions, 0);
+    const totalCorrect = visibleBatches.reduce((acc, b) => acc + b.correct_answers, 0);
     const globalAccuracy =
       totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 1000) / 10 : null;
 
-    const practicedSubtopics = subtopics.filter((t) => {
+    const practicedSubtopics = visibleSubtopics.filter((t) => {
       if (t.practiced_questions) return true;
-      return batches.some((b) => b.subtopic_id === t.id);
+      return visibleBatches.some((b) => b.subtopic_id === t.id);
     }).length;
 
     const weekAgo = addDaysISO(today, -6);
-    const completedLast7Days = sessions.filter(
+    const completedLast7Days = visibleSessions.filter(
       (s) => s.completed && s.scheduled_date >= weekAgo && s.scheduled_date <= today
     ).length;
-    const plannedToday = sessions.filter((s) => s.scheduled_date === today);
+    const plannedToday = visibleSessions.filter((s) => s.scheduled_date === today);
 
     return {
       totalQuestions,
@@ -67,20 +114,28 @@ export const DashboardPage: React.FC = () => {
       globalMastery: getMasteryLevel(globalAccuracy),
       practicedSubtopics,
       practicedPct:
-        subtopics.length > 0 ? Math.round((practicedSubtopics / subtopics.length) * 100) : 0,
+        visibleSubtopics.length > 0
+          ? Math.round((practicedSubtopics / visibleSubtopics.length) * 100)
+          : 0,
       completedLast7Days,
       plannedTodayCount: plannedToday.length,
       completedTodayCount: plannedToday.filter((s) => s.completed).length,
     };
-  }, [subtopics, batches, sessions, today]);
+  }, [visibleSubtopics, visibleBatches, visibleSessions, today]);
 
   const subjectChartData = useMemo(() => {
-    return subjects.map((subject) => {
-      const stats = computeSubjectStats(subject.id, subtopics, batches);
+    return visibleSubjects.map((subject) => {
+      const stats = computeSubjectStats(subject.id, visibleSubtopics, visibleBatches);
+      const exam = subject.exam_id ? examMap.get(subject.exam_id) : undefined;
+      const fullLabel =
+        selectedExamId === 'all' && exam
+          ? `${exam.name} • ${subject.name}`
+          : subject.name;
+
       return {
         id: subject.id,
         name: subject.name.length > 18 ? `${subject.name.slice(0, 16)}…` : subject.name,
-        fullName: subject.name,
+        fullName: fullLabel,
         taxa: stats.accuracy !== null ? Math.round(stats.accuracy) : 0,
         hasQuestions: stats.totalQuestions > 0,
         meta: subject.target_accuracy,
@@ -89,12 +144,12 @@ export const DashboardPage: React.FC = () => {
         acertos: stats.correctAnswers,
       };
     });
-  }, [subjects, subtopics, batches]);
+  }, [visibleSubjects, visibleSubtopics, visibleBatches, examMap, selectedExamId]);
 
   const upcomingSessions = useMemo(() => {
-    const subjectMap = new Map(subjects.map((s) => [s.id, s]));
-    const subtopicMap = new Map(subtopics.map((t) => [t.id, t]));
-    return sessions
+    const subjectMap = new Map(visibleSubjects.map((s) => [s.id, s]));
+    const subtopicMap = new Map(visibleSubtopics.map((t) => [t.id, t]));
+    return visibleSessions
       .filter((s) => s.scheduled_date >= today)
       .sort((a, b) => {
         const cmp = a.scheduled_date.localeCompare(b.scheduled_date);
@@ -102,19 +157,24 @@ export const DashboardPage: React.FC = () => {
         return (a.start_time || '99:99').localeCompare(b.start_time || '99:99');
       })
       .slice(0, 5)
-      .map((s) => ({
-        session: s,
-        subject: subjectMap.get(s.subject_id),
-        subtopic: s.subtopic_id ? subtopicMap.get(s.subtopic_id) : undefined,
-      }));
-  }, [sessions, subjects, subtopics, today]);
+      .map((s) => {
+        const subject = subjectMap.get(s.subject_id);
+        const exam = subject?.exam_id ? examMap.get(subject.exam_id) : undefined;
+        return {
+          session: s,
+          subject,
+          exam,
+          subtopic: s.subtopic_id ? subtopicMap.get(s.subtopic_id) : undefined,
+        };
+      });
+  }, [visibleSessions, visibleSubjects, visibleSubtopics, examMap, today]);
 
   const topAlerts = useMemo(
-    () => reviewAlerts.filter((a) => a.priority !== 'unpracticed').slice(0, 4),
-    [reviewAlerts]
+    () => visibleAlerts.filter((a) => a.priority !== 'unpracticed').slice(0, 4),
+    [visibleAlerts]
   );
 
-  const urgentCount = reviewAlerts.filter((a) => a.priority !== 'unpracticed').length;
+  const urgentCount = visibleAlerts.filter((a) => a.priority !== 'unpracticed').length;
 
   const handleToggleSession = async (id: string, current: boolean) => {
     await updateSession(id, { completed: !current });
@@ -129,12 +189,28 @@ export const DashboardPage: React.FC = () => {
           Dashboard
         </h2>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {exams.length > 0 && (
+            <select
+              value={selectedExamId}
+              onChange={(e) => setSelectedExamId(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+            >
+              <option value="all">Todos os concursos ({exams.length})</option>
+              {exams.map((exam) => (
+                <option key={exam.id} value={exam.id}>
+                  {exam.name}
+                </option>
+              ))}
+              {hasUnassigned && <option value="unassigned">Sem concurso</option>}
+            </select>
+          )}
+
           <button
             onClick={() => setActiveTab('subjects')}
             className="px-3.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 transition-colors"
           >
-            Matérias
+            Concursos & Matérias
           </button>
           <button
             onClick={() => setActiveTab('calendar')}
@@ -177,7 +253,7 @@ export const DashboardPage: React.FC = () => {
               {globalStats.practicedPct}%
             </span>
             <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums">
-              {globalStats.practicedSubtopics}/{subtopics.length}
+              {globalStats.practicedSubtopics}/{visibleSubtopics.length}
             </span>
           </div>
           <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 mt-2.5 overflow-hidden">
@@ -199,8 +275,8 @@ export const DashboardPage: React.FC = () => {
             <span className="text-xs text-rose-500 font-medium">abaixo de 70%</span>
           </div>
           <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5 tabular-nums">
-            {reviewAlerts.filter((a) => a.priority === 'high').length} críticos •{' '}
-            {reviewAlerts.filter((a) => a.priority === 'medium').length} básicos
+            {visibleAlerts.filter((a) => a.priority === 'high').length} críticos •{' '}
+            {visibleAlerts.filter((a) => a.priority === 'medium').length} básicos
           </p>
         </div>
 
@@ -236,7 +312,7 @@ export const DashboardPage: React.FC = () => {
             </button>
           </div>
 
-          {subjects.length === 0 ? (
+          {visibleSubjects.length === 0 ? (
             <div className="h-60 flex flex-col items-center justify-center text-center px-4 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
               <BookOpen className="w-6 h-6 text-slate-400 mb-2" />
               <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
@@ -246,7 +322,7 @@ export const DashboardPage: React.FC = () => {
                 onClick={() => setActiveTab('subjects')}
                 className="mt-3 px-3.5 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium"
               >
-                Cadastrar matéria
+                Cadastrar concurso e matérias
               </button>
             </div>
           ) : (
@@ -308,7 +384,7 @@ export const DashboardPage: React.FC = () => {
               onClick={() => setActiveTab('reviews')}
               className="text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline"
             >
-              Ver todos ({reviewAlerts.length})
+              Ver todos ({visibleAlerts.length})
             </button>
           </div>
 
@@ -334,7 +410,11 @@ export const DashboardPage: React.FC = () => {
                           className="w-2 h-2 rounded-full shrink-0"
                           style={{ backgroundColor: alert.subject.color }}
                         />
-                        <span className="truncate">{alert.subject.name}</span>
+                        <span className="truncate">
+                          {selectedExamId === 'all' && alert.exam
+                            ? `${alert.exam.name} • ${alert.subject.name}`
+                            : alert.subject.name}
+                        </span>
                       </div>
                       <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate mt-0.5">
                         {alert.subtopic.title}
@@ -398,7 +478,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         ) : (
           <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
-            {upcomingSessions.map(({ session, subject, subtopic }) => {
+            {upcomingSessions.map(({ session, subject, exam, subtopic }) => {
               const typeMeta = SESSION_TYPE_META[session.session_type];
               const isToday = session.scheduled_date === today;
               return (
@@ -423,6 +503,11 @@ export const DashboardPage: React.FC = () => {
                         className="w-2 h-2 rounded-full shrink-0"
                         style={{ backgroundColor: subject?.color ?? '#4F46E5' }}
                       />
+                      {selectedExamId === 'all' && exam && (
+                        <span className="hidden md:inline px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] font-medium text-slate-500 dark:text-slate-400 shrink-0">
+                          {exam.name}
+                        </span>
+                      )}
                       <span
                         className={`text-sm font-medium truncate ${
                           session.completed

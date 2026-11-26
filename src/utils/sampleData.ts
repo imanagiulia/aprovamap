@@ -5,9 +5,33 @@ export function createSampleData(): AppDataSnapshot {
   const now = new Date().toISOString();
   const today = todayISO();
 
+  const exams = [
+    {
+      id: 'exam-pf',
+      name: 'Polícia Federal — Agente',
+      board: 'Cebraspe',
+      exam_date: addDaysISO(today, 95),
+      description: 'Foco em Direito, Raciocínio Lógico e estatística da banca Cebraspe.',
+      color: '#4F46E5',
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: 'exam-tjsp',
+      name: 'TJ-SP — Escrevente Técnico',
+      board: 'Vunesp',
+      exam_date: addDaysISO(today, 140),
+      description: 'Edital focado em Língua Portuguesa e letra de lei.',
+      color: '#059669',
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+
   const subjects = [
     {
       id: 'sub-const',
+      exam_id: 'exam-pf',
       name: 'Direito Constitucional',
       description: 'CF/88, Direitos Fundamentais, Organização do Estado e Controle de Constitucionalidade',
       color: '#4F46E5',
@@ -17,6 +41,7 @@ export function createSampleData(): AppDataSnapshot {
     },
     {
       id: 'sub-adm',
+      exam_id: 'exam-pf',
       name: 'Direito Administrativo',
       description: 'Princípios, Atos Administrativos, Poderes, Licitações (Lei 14.133/21) e Improbidade',
       color: '#0284C7',
@@ -25,20 +50,22 @@ export function createSampleData(): AppDataSnapshot {
       updated_at: now,
     },
     {
-      id: 'sub-port',
-      name: 'Língua Portuguesa',
-      description: 'Interpretação de texto, sintaxe, crase, concordância e regência verbal',
-      color: '#059669',
-      target_accuracy: 85,
-      created_at: now,
-      updated_at: now,
-    },
-    {
       id: 'sub-rlm',
+      exam_id: 'exam-pf',
       name: 'Raciocínio Lógico',
       description: 'Proposições, tabelas-verdade, equivalências, probabilidade e análise combinatória',
       color: '#D97706',
       target_accuracy: 75,
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: 'sub-port',
+      exam_id: 'exam-tjsp',
+      name: 'Língua Portuguesa',
+      description: 'Interpretação de texto, sintaxe, crase, concordância e regência verbal',
+      color: '#059669',
+      target_accuracy: 85,
       created_at: now,
       updated_at: now,
     },
@@ -183,7 +210,7 @@ export function createSampleData(): AppDataSnapshot {
       subtopic_id: 'top-port-1',
       total_questions: 30,
       correct_answers: 19,
-      source: 'FGV',
+      source: 'Vunesp',
       notes: 'Melhorar identificação de regência indireta.',
       practiced_at: addDaysISO(today, -4),
       created_at: now,
@@ -203,7 +230,7 @@ export function createSampleData(): AppDataSnapshot {
       subtopic_id: 'top-rlm-2',
       total_questions: 15,
       correct_answers: 6,
-      source: 'FGV',
+      source: 'Cebraspe',
       notes: 'Preciso refazer aula de combinação com repetição.',
       practiced_at: addDaysISO(today, -2),
       created_at: now,
@@ -291,5 +318,5 @@ export function createSampleData(): AppDataSnapshot {
     },
   ];
 
-  return { subjects, subtopics, batches, sessions };
+  return { exams, subjects, subtopics, batches, sessions };
 }

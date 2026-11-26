@@ -1,19 +1,57 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,
   BookOpenCheck,
   CalendarDays,
+  Check,
   Cloud,
+  Copy,
   Database,
   LayoutDashboard,
   LogOut,
   Moon,
+  RefreshCw,
   Settings,
   Sun,
 } from 'lucide-react';
 import { useStudy } from '../context/StudyContext';
 import type { ActiveTab } from '../types';
+
+const MIGRATION_SQL = `create table if not exists public.exams (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (char_length(trim(name)) > 0),
+  board text,
+  exam_date date,
+  description text,
+  color text not null default '#4F46E5',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_exams_user_id on public.exams(user_id);
+
+drop trigger if exists trg_exams_updated_at on public.exams;
+create trigger trg_exams_updated_at
+  before update on public.exams
+  for each row execute function public.set_updated_at();
+
+alter table public.subjects
+  add column if not exists exam_id uuid references public.exams(id) on delete cascade;
+
+create index if not exists idx_subjects_exam_id on public.subjects(exam_id);
+
+grant select, insert, update, delete on table public.exams to authenticated;
+alter table public.exams enable row level security;
+
+drop policy if exists "exams_owner_all" on public.exams;
+create policy "exams_owner_all" on public.exams
+  for all to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';`;
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -23,6 +61,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const {
     user,
     isSupabaseMode,
+    schemaNeedsMigration,
+    refreshData,
     activeTab,
     setActiveTab,
     reviewAlerts,
@@ -31,6 +71,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     signOut,
     toast,
   } = useStudy();
+
+  const [copiedSql, setCopiedSql] = useState(false);
 
   const urgentAlertCount = reviewAlerts.filter(
     (a) => a.priority === 'high' || a.priority === 'medium'
@@ -44,7 +86,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     badge?: number;
   }[] = [
     { id: 'dashboard', label: 'Dashboard', shortLabel: 'Início', icon: LayoutDashboard },
-    { id: 'subjects', label: 'Matérias & Tópicos', shortLabel: 'Matérias', icon: BookOpen },
+    { id: 'subjects', label: 'Concursos & Matérias', shortLabel: 'Matérias', icon: BookOpen },
     { id: 'calendar', label: 'Calendário', shortLabel: 'Agenda', icon: CalendarDays },
     {
       id: 'reviews',
@@ -55,6 +97,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
     { id: 'settings', label: 'Configurações', shortLabel: 'Config', icon: Settings },
   ];
+
+  const handleCopySql = async () => {
+    await navigator.clipboard.writeText(MIGRATION_SQL);
+    setCopiedSql(true);
+    window.setTimeout(() => setCopiedSql(false), 2500);
+  };
 
   return (
     <div className="min-h-screen flex bg-slate-50/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -165,7 +213,39 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </header>
 
         {/* Page body */}
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-8 pb-24 lg:pb-10 max-w-6xl w-full mx-auto">
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-8 pb-24 lg:pb-10 max-w-6xl w-full mx-auto space-y-6">
+          {isSupabaseMode && schemaNeedsMigration && (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-xs sm:text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  Atualização de banco necessária no Supabase (Concursos)
+                </p>
+                <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+                  Copie o script de migração (<code className="font-mono">supabase/migration_exams.sql</code>), cole no{' '}
+                  <strong>SQL Editor</strong> do seu Supabase e clique em <strong>Run</strong> para ativar os concursos.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors"
+                >
+                  {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedSql ? 'SQL copiado!' : 'Copiar SQL'}
+                </button>
+                <button
+                  type="button"
+                  onClick={refreshData}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 text-xs font-medium hover:bg-amber-100/50 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Já executei
+                </button>
+              </div>
+            </div>
+          )}
+
           {children}
         </main>
 

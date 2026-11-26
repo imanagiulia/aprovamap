@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import type { StudyStatus, Subject, Subtopic } from '../types';
 import { STUDY_STATUS_META } from '../utils/mastery';
-import { formatDatabaseError } from '../context/StudyContext';
+import { formatDatabaseError, useStudy } from '../context/StudyContext';
 
 interface SubtopicModalProps {
   isOpen: boolean;
@@ -27,6 +27,7 @@ export const SubtopicModal: React.FC<SubtopicModalProps> = ({
   onClose,
   onSave,
 }) => {
+  const { exams } = useStudy();
   const [subjectId, setSubjectId] = useState('');
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
@@ -53,6 +54,23 @@ export const SubtopicModal: React.FC<SubtopicModalProps> = ({
       }
     }
   }, [isOpen, editingSubtopic, defaultSubjectId, subjects]);
+
+  const groupedSubjects = useMemo(() => {
+    if (exams.length === 0) return null;
+    const examIds = new Set(exams.map((e) => e.id));
+    const groups = exams
+      .map((exam) => ({
+        label: exam.board ? `${exam.name} (${exam.board})` : exam.name,
+        items: subjects.filter((s) => s.exam_id === exam.id),
+      }))
+      .filter((g) => g.items.length > 0);
+
+    const unassigned = subjects.filter((s) => !s.exam_id || !examIds.has(s.exam_id));
+    if (unassigned.length > 0) {
+      groups.push({ label: 'Sem concurso vinculado', items: unassigned });
+    }
+    return groups;
+  }, [exams, subjects]);
 
   if (!isOpen) return null;
 
@@ -109,11 +127,21 @@ export const SubtopicModal: React.FC<SubtopicModalProps> = ({
               onChange={(e) => setSubjectId(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
+              {groupedSubjects
+                ? groupedSubjects.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.items.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : subjects.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
             </select>
           </div>
 
